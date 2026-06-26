@@ -41,7 +41,6 @@ end
 function Cooldown.update(ctx, dt)
 	if ctx.state.paused or ctx.state.remaining <= 0 then return end
 
-	-- Apply time scaling features seamlessly
 	local actualDt = dt * ctx.state.timeScale
 	ctx.state.remaining -= actualDt
 
