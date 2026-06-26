@@ -39,46 +39,65 @@ function ResourceManager:ConnectOnCall(callback)
 end
 
 function ResourceManager:init(resource)
-	if self.state[resource.id] then return end
+	assert(resource, "ResourceManager: resource is nil in init()")
+	if self.state[resource.id] then 
+		return self.state[resource.id].wrapper 
+	end
 
-	self.state[resource.id] = {
+	local stateEntry = {
 		resource = resource,
-		data = {},
+		data     = {},
+		wrapper  = nil, -- Will fill this in below
 	}
+	self.state[resource.id] = stateEntry
+
+	-- Create the wrapper once and cache it
+	stateEntry.wrapper = self:getResource(resource)
 
 	local strategy = self:getStrategy(resource)
 	if strategy.init then
 		strategy.init({
-			state = self.state[resource.id].data,
+			state    = stateEntry.data,
 			resource = resource,
-			entity = self.entity,
-			manager = self,
+			entity   = self.entity,
+			manager  = self,
 		})
 	end
+
+	return stateEntry.wrapper
 end
 
+function ResourceManager:getResource(resource)
+	local proxyMethods = {}
+	return setmetatable({}, {
+		__index = function(_, functionName)
+			if not proxyMethods[functionName] then
+				proxyMethods[functionName] = function(_, ...)
+					return self:call(resource, functionName, ...)
+				end
+			end
+			return proxyMethods[functionName]
+		end
+	})
+end
+
+
 function ResourceManager:call(resource, functionName, ...)
-	assert(resource, "ResourceManager: resource is nil in call()")
-
-	if not self.state[resource.id] then
-		self:init(resource)
-	end
-
-	local strategy = self:getStrategy(resource)
-	local func = strategy[functionName]
-	if not func then
-		warn(string.format("Strategy %s does not support: %s", tostring(resource.type), tostring(functionName)))
-		return nil
-	end
-
-	self._signalWrapper:Fire(functionName, resource, ...)
-
-	return func({
-		state = self.state[resource.id].data,
-		resource = resource,
-		entity = self.entity,
-		manager = self,
-	}, ...)
+    assert(resource, "ResourceManager: resource is nil in call()")
+    assert(self.state[resource.id], "ResourceManager: resource not initialized: " .. tostring(resource.id))
+    local strategy = self:getStrategy(resource)
+    local func = strategy[functionName]
+    if not func then
+        warn(string.format("Strategy %s does not support: %s", tostring(resource.type), tostring(functionName)))
+        return nil
+    end
+    self._signalWrapper:Fire(functionName, resource, ...)
+    return func({
+        state    = self.state[resource.id].data,
+        resource = resource,
+        entity   = self.entity,
+        manager  = self,
+    }, ...)
 end
 
 function ResourceManager:canAfford(resource, ...)
@@ -111,10 +130,12 @@ function ResourceManager:update(dt)
 end
 
 function ResourceManager:remove(resource)
-	if self.state[resource.id] then
+	if not self.state[resource.id] then return end
+	local strategy = strategies[resource.type]
+	if strategy and strategy.cleanup then
 		self:call(resource, "cleanup")
-		self.state[resource.id] = nil
 	end
+	self.state[resource.id] = nil
 end
 
 -- Auto registration
